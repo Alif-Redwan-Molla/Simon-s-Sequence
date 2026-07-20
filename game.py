@@ -40,8 +40,8 @@ HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "high
 
 BG_COLOR = (18, 18, 24)
 PANEL_COLOR = (30, 30, 40)
-TEXT_COLOR = (235, 235, 240)
-ACCENT_COLOR = (90, 200, 255)
+TEXT_COLOR = (200, 210, 220)  # slightly softer than pure white for better contrast
+ACCENT_COLOR = (80, 185, 240)
 
 DIFFICULTIES = {
     "Easy":   {"flash_time": 0.65, "gap_time": 0.30, "round_time": 6.0, "lives": 5},
@@ -50,15 +50,15 @@ DIFFICULTIES = {
 }
 
 TILE_DEFS_4 = [
-    {"name": "Blue",   "color": (60, 120, 235), "freq": 261.6, "filter": mean_filter},
-    {"name": "Red",    "color": (225, 70, 70),  "freq": 329.6, "filter": sharpen_filter},
-    {"name": "Green",  "color": (70, 200, 110), "freq": 392.0, "filter": sobel_edge_detection},
-    {"name": "Yellow", "color": (235, 205, 60), "freq": 523.3, "filter": emboss_filter},
+    {"name": "Blue",   "color": (70, 130, 230), "freq": 261.6, "filter": mean_filter},
+    {"name": "Red",    "color": (215, 85, 95),  "freq": 329.6, "filter": sharpen_filter},
+    {"name": "Green",  "color": (80, 195, 120), "freq": 392.0, "filter": sobel_edge_detection},
+    {"name": "Yellow", "color": (230, 185, 60), "freq": 523.3, "filter": emboss_filter},
 ]
 
 TILE_DEFS_6 = TILE_DEFS_4 + [
-    {"name": "Purple", "color": (170, 90, 220), "freq": 196.0, "filter": median_filter},
-    {"name": "Cyan",   "color": (70, 210, 210), "freq": 440.0,
+    {"name": "Purple", "color": (160, 95, 205), "freq": 196.0, "filter": median_filter},
+    {"name": "Cyan",   "color": (60, 195, 185), "freq": 440.0,
      "filter": lambda img: sharpen_filter(sobel_edge_detection(img))},
 ]
 
