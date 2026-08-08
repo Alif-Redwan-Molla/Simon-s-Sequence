@@ -109,14 +109,16 @@ class Button:
         pts = ga.rounded_rect_points(self.rect.x, self.rect.y, self.rect.w, self.rect.h,
                                       radius, segments=6)
         if active:
-            top_c, bottom_c = _lighten(ACCENT_COLOR, 0.15), _darken(ACCENT_COLOR, 0.30)
-            outline_c = _lighten(ACCENT_COLOR, 0.4)
+            top_c, bottom_c = _lighten(ACCENT_COLOR, 0.28), _darken(ACCENT_COLOR, 0.08)
+            outline_c = _lighten(ACCENT_COLOR, 0.60)
+            text_c = (255, 255, 255)
         else:
-            top_c, bottom_c = _lighten(PANEL_COLOR, 0.15), PANEL_COLOR
-            outline_c = (90, 90, 105)
+            top_c, bottom_c = (62, 64, 82), (40, 42, 58)
+            outline_c = (85, 88, 110)
+            text_c = (235, 240, 248)
         ga.fill_polygon_gradient(surface, pts, top_c, bottom_c)
         ga.draw_polygon_outline(surface, pts, outline_c, algorithm=ga.bresenham_line, thickness=2)
-        text = font.render(self.label, True, TEXT_COLOR)
+        text = font.render(self.label, True, text_c)
         surface.blit(text, text.get_rect(center=self.rect.center))
 
     def clicked(self, pos):
@@ -138,8 +140,12 @@ class Game:
         if self.use_opengl:
             self._init_opengl()
         else:
-            self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
-            pygame.display.set_caption("Simon's Sequence")
+            self.window = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+            self.screen = pygame.Surface((WIDTH, HEIGHT))
+            self.window_size = (WIDTH, HEIGHT)
+            self._present_scale = 1.0
+            self._present_offset = (0, 0)
+        pygame.display.set_caption("Simon's Sequence")
 
         self.clock = pygame.time.Clock()
         self.font_small = pygame.font.SysFont("arial", 18)
@@ -158,6 +164,9 @@ class Game:
         # Bonus feature: Live Algorithm Visualizer Mode (toggle with V)
         self.visualizer = AlgorithmVisualizer()
         self.show_visualizer = False
+        self.visualizer_close_button = Button(
+            (20 + 280 - 55, HEIGHT - 190 + 8, 50, 24),
+            "OFF", "close_visualizer")
 
         # Bonus feature: Flood Fill Victory Pattern (every 5th round)
         self.victory_pattern_surface = None
@@ -167,6 +176,7 @@ class Game:
         self.recorder = ReplayRecorder()
         self.last_replay = None
         self.replay_player = None
+        self.replay_button = None
 
         self._build_menu_buttons()
         self.bg_surface = self._build_background()
@@ -224,7 +234,7 @@ class Game:
             "field": self._build_glass_panel(field[2], field[3], radius=22, alpha=70,
                                               base_color=(22, 22, 30)),
             "hud": self._build_glass_panel(hud_rect[2], hud_rect[3], radius=16, alpha=140),
-            "menu_card": self._build_glass_panel(menu_card[2], menu_card[3], radius=24, alpha=120),
+            "menu_card": self._build_glass_panel(menu_card[2], menu_card[3], radius=24, alpha=170),
             "pause": self._build_glass_panel(pause_rect[2], pause_rect[3], radius=20, alpha=210),
             "gameover": self._build_glass_panel(gameover_rect[2], gameover_rect[3], radius=22,
                                                  alpha=210, border_color=(225, 80, 80)),
@@ -332,15 +342,31 @@ class Game:
 
     # ---------------------------------------------------------- setup --
     def _build_menu_buttons(self):
+        card_x = WIDTH // 2 - 260
+        card_w = 520
+        center_x = card_x + card_w // 2
+        diff_btn_w, diff_btn_h = 130, 46
+        diff_gap = 20
+        diff_total = 3 * diff_btn_w + 2 * diff_gap
+        diff_start = center_x - diff_total // 2
         self.difficulty_buttons = [
-            Button((WIDTH // 2 - 210 + i * 150, 300, 130, 46), name, name)
+            Button((diff_start + i * (diff_btn_w + diff_gap), 225, diff_btn_w, diff_btn_h), name, name)
             for i, name in enumerate(DIFFICULTIES)
         ]
+        tile_btn_w, tile_btn_h = 80, 46
+        tile_gap = 20
+        tile_total = 2 * tile_btn_w + 1 * tile_gap
+        tile_start = center_x - tile_total // 2
         self.tile_count_buttons = [
-            Button((WIDTH // 2 - 90 + i * 100, 380, 80, 46), f"{n} tiles", n)
+            Button((tile_start + i * (tile_btn_w + tile_gap), 340, tile_btn_w, tile_btn_h), f"{n} tiles", n)
             for i, n in enumerate((4, 6))
         ]
-        self.start_button = Button((WIDTH // 2 - 90, 470, 180, 56), "Start Game")
+        start_btn_w, start_btn_h = 180, 56
+        self.start_button = Button((center_x - start_btn_w // 2, 440, start_btn_w, start_btn_h), "Start Game")
+        vis_btn_w, vis_btn_h = 200, 42
+        self.visualizer_button = Button(
+            (center_x - vis_btn_w // 2, 500, vis_btn_w, vis_btn_h),
+            "Algorithm Visualizer", "toggle_visualizer")
 
     def reset_run(self, full=False):
         defs = TILE_DEFS_4 if self.tile_count == 4 else TILE_DEFS_6
@@ -423,12 +449,36 @@ class Game:
                 self._handle_event(event)
             self._update(dt)
             self._draw()
-            pygame.display.flip()
+            if self.use_opengl:
+                pygame.display.flip()
+            else:
+                self._present()
+
+    def _present(self):
+        win_w, win_h = self.window_size
+        scale = min(win_w / WIDTH, win_h / HEIGHT)
+        out_w, out_h = max(1, int(WIDTH * scale)), max(1, int(HEIGHT * scale))
+        scaled = pygame.transform.smoothscale(self.screen, (out_w, out_h))
+        self._present_scale = scale
+        self._present_offset = ((win_w - out_w) // 2, (win_h - out_h) // 2)
+        self.window.fill((0, 0, 0))
+        self.window.blit(scaled, self._present_offset)
+        pygame.display.flip()
+
+    def _to_virtual(self, pos):
+        ox, oy = self._present_offset
+        scale = self._present_scale or 1.0
+        return ((pos[0] - ox) / scale, (pos[1] - oy) / scale)
 
     def _handle_event(self, event):
         if event.type == pygame.QUIT:
             pygame.quit()
             sys.exit(0)
+
+        if event.type == pygame.VIDEORESIZE and not self.use_opengl:
+            self.window = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+            self.window_size = (event.w, event.h)
+            return
 
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_p and self.state in (Game.STATE_PLAYER_TURN, Game.STATE_SHOW_SEQUENCE):
@@ -461,7 +511,10 @@ class Game:
                     elif self.state == Game.STATE_PAUSED:
                         self.state = Game.STATE_PLAYER_TURN
                     elif self.state == Game.STATE_GAME_OVER:
-                        self.state = Game.STATE_MENU
+                        if self.replay_button and self.replay_button.clicked(event.pos):
+                            self._start_replay()
+                        else:
+                            self.state = Game.STATE_MENU
                     elif self.state == Game.STATE_REPLAY and self.replay_player.finished:
                         self.state = Game.STATE_MENU
                 elif event.button == 4:
@@ -479,15 +532,20 @@ class Game:
             return
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            pos = event.pos
-            if self.state == Game.STATE_MENU:
+            pos = self._to_virtual(event.pos)
+            if self.show_visualizer and self.visualizer_close_button.clicked(pos):
+                self.show_visualizer = False
+            elif self.state == Game.STATE_MENU:
                 self._handle_menu_click(pos)
             elif self.state == Game.STATE_PLAYER_TURN:
                 self._handle_tile_click(pos)
             elif self.state == Game.STATE_PAUSED:
                 self.state = Game.STATE_PLAYER_TURN
             elif self.state == Game.STATE_GAME_OVER:
-                self.state = Game.STATE_MENU
+                if self.replay_button and self.replay_button.clicked(pos):
+                    self._start_replay()
+                else:
+                    self.state = Game.STATE_MENU
             elif self.state == Game.STATE_REPLAY and self.replay_player.finished:
                 self.state = Game.STATE_MENU
 
@@ -500,6 +558,8 @@ class Game:
                 self.tile_count = b.value
         if self.start_button.clicked(pos):
             self.start_game()
+        if self.visualizer_button.clicked(pos):
+            self.show_visualizer = not self.show_visualizer
 
     def _handle_tile_click(self, pos):
         if self.use_opengl:
@@ -600,6 +660,10 @@ class Game:
                 save_high_score(self.high_score)
             self._prepare_post_round_analysis()
             self.last_replay = self.recorder.snapshot(self.tile_count, self.difficulty_name, self.score)
+            btn_w, btn_h = 160, 42
+            self.replay_button = Button(
+                (WIDTH // 2 - btn_w // 2, HEIGHT // 2 + 95, btn_w, btn_h),
+                "Watch Replay", "replay")
         else:
             # retry same sequence from the start
             self.player_index = 0
@@ -727,6 +791,7 @@ class Game:
         if self.show_visualizer:
             self.visualizer.draw(self.screen, (20, HEIGHT - 190, 280, 170),
                                   self.font_small, self.font_mono)
+            self.visualizer_close_button.draw(self.screen, self.font_small, active=False)
 
     def _draw_opengl(self):
         self.ctx.clear(0.06, 0.06, 0.09, 1.0, depth=1.0)
@@ -774,39 +839,47 @@ class Game:
         # Glass card behind all menu content.
         self._blit_panel("menu_card")
 
-        # Soft glow behind the title, built from several low-alpha,
-        # slightly offset copies of the text.
-        glow_layer = pygame.Surface((WIDTH, 100), pygame.SRCALPHA)
-        title_glow = self.font_big.render("Simon's Sequence", True, (*ACCENT_COLOR, 55))
-        for ox, oy in [(-3, -3), (3, -3), (-3, 3), (3, 3), (0, 4), (0, -4), (4, 0), (-4, 0)]:
-            glow_layer.blit(title_glow, title_glow.get_rect(center=(WIDTH // 2 + ox, 50 + oy)))
-        self.screen.blit(glow_layer, (0, 70), special_flags=pygame.BLEND_RGBA_ADD)
-
-        title = self.font_big.render("Simon's Sequence", True, ACCENT_COLOR)
-        self.screen.blit(title, title.get_rect(center=(WIDTH // 2, 120)))
+        self._draw_glow_text("Simon's Sequence", self.font_big, ACCENT_COLOR, (WIDTH // 2, 100))
         sub = self.font_small.render(
             "2D Graphics Algorithms + Digital Image Processing", True, TEXT_COLOR)
-        self.screen.blit(sub, sub.get_rect(center=(WIDTH // 2, 165)))
+        self.screen.blit(sub, sub.get_rect(center=(WIDTH // 2, 148)))
+
+        card_x, card_y, card_w, card_h = self.panel_rects["menu_card"]
+        center_x = card_x + card_w // 2
 
         label = self.font_med.render("Difficulty", True, TEXT_COLOR)
-        self.screen.blit(label, (WIDTH // 2 - 210, 265))
+        self.screen.blit(label, label.get_rect(center=(center_x, 195)))
         for b in self.difficulty_buttons:
             b.draw(self.screen, self.font_small, active=(b.value == self.difficulty_name))
 
         label2 = self.font_med.render("Board Size", True, TEXT_COLOR)
-        self.screen.blit(label2, (WIDTH // 2 - 90, 345))
+        self.screen.blit(label2, label2.get_rect(center=(center_x, 310)))
         for b in self.tile_count_buttons:
             b.draw(self.screen, self.font_small, active=(b.value == self.tile_count))
 
         self.start_button.draw(self.screen, self.font_med, active=True)
+        self.visualizer_button.draw(self.screen, self.font_small, active=self.show_visualizer)
 
         hs = self.font_small.render(f"High Score: {self.high_score}", True, TEXT_COLOR)
         self.screen.blit(hs, hs.get_rect(center=(WIDTH // 2, 560)))
 
-        help_text = self.font_small.render(
-            "Click tiles in the flashed order.  P = pause   Esc = quit   V = algorithm visualizer",
+        vis_status = self.font_small.render(
+            f"Algorithm Visualizer: {'ON' if self.show_visualizer else 'OFF'}  (toggle with button or V key)",
             True, TEXT_COLOR)
-        self.screen.blit(help_text, help_text.get_rect(center=(WIDTH // 2, 600)))
+        self.screen.blit(vis_status, vis_status.get_rect(center=(WIDTH // 2, 600)))
+
+    def _draw_glow_text(self, text, font, color, center, glow_alpha=90, blur_step=6):
+        text_surf = font.render(text, True, color)
+        pad = blur_step * 3
+        w, h = text_surf.get_size()
+        padded = pygame.Surface((w + pad * 2, h + pad * 2), pygame.SRCALPHA)
+        padded.blit(text_surf, (pad, pad))
+        small = pygame.transform.smoothscale(
+            padded, (max(1, padded.get_width() // blur_step), max(1, padded.get_height() // blur_step)))
+        glow = pygame.transform.smoothscale(small, padded.get_size())
+        glow.set_alpha(glow_alpha)
+        self.screen.blit(glow, glow.get_rect(center=center))
+        self.screen.blit(text_surf, text_surf.get_rect(center=center))
 
     def _draw_board(self):
         # Play-field border: a rounded panel with a soft accent glow,
@@ -910,9 +983,8 @@ class Game:
         sub1 = self.font_small.render(
             "Press M for the filtered image comparison", True, TEXT_COLOR)
         self.screen.blit(sub1, sub1.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 35)))
-        sub2 = self.font_small.render(
-            "Press R to watch the replay  |  click to return to menu", True, TEXT_COLOR)
-        self.screen.blit(sub2, sub2.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 60)))
+        if self.replay_button is not None:
+            self.replay_button.draw(self.screen, self.font_small, active=False)
 
 
 def main():
