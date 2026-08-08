@@ -11,6 +11,7 @@ if __name__ == "__main__":
     print("Thanks for playing Simon's Sequence!")
     print("If you enjoyed the game, please consider supporting the developer!")
     print("github check")
+    print("again github check")
     parser = argparse.ArgumentParser(description="Simon's Sequence")
     parser.add_argument("--opengl", action="store_true", help="Run in OpenGL 3D mode")
     args = parser.parse_args()
