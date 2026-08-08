@@ -104,11 +104,16 @@ class Button:
         self.label = label
         self.value = value
 
-    def draw(self, surface, font, active=False):
+    def draw(self, surface, font, active=False, bg_color=None):
         radius = min(14, self.rect.h / 2)
         pts = ga.rounded_rect_points(self.rect.x, self.rect.y, self.rect.w, self.rect.h,
                                       radius, segments=6)
-        if active:
+        if bg_color is not None:
+            top_c = _lighten(bg_color, 0.25)
+            bottom_c = _darken(bg_color, 0.15)
+            outline_c = _lighten(bg_color, 0.50)
+            text_c = (255, 255, 255)
+        elif active:
             top_c, bottom_c = _lighten(ACCENT_COLOR, 0.28), _darken(ACCENT_COLOR, 0.08)
             outline_c = _lighten(ACCENT_COLOR, 0.60)
             text_c = (255, 255, 255)
@@ -791,7 +796,7 @@ class Game:
         if self.show_visualizer:
             self.visualizer.draw(self.screen, (20, HEIGHT - 190, 280, 170),
                                   self.font_small, self.font_mono)
-            self.visualizer_close_button.draw(self.screen, self.font_small, active=False)
+            self.visualizer_close_button.draw(self.screen, self.font_small, bg_color=(200, 55, 55))
 
     def _draw_opengl(self):
         self.ctx.clear(0.06, 0.06, 0.09, 1.0, depth=1.0)
