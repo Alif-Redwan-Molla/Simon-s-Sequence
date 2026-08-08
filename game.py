@@ -22,6 +22,17 @@ import sys
 import numpy as np
 import pygame
 
+_OPENGL_AVAILABLE = False
+try:
+    from renderer import gl_context
+    from renderer.board_renderer import BoardRenderer
+    from renderer.camera import OrbitCamera
+    from renderer.picking import pick_tile
+    import moderngl
+    _OPENGL_AVAILABLE = True
+except ImportError:
+    pass
+
 import graphics_algorithms as ga
 import clipping as clip
 from game_objects import Tile
@@ -120,10 +131,16 @@ class Game:
     STATE_GAME_OVER = "game_over"
     STATE_REPLAY = "replay"
 
-    def __init__(self):
+    def __init__(self, use_opengl=False):
+        self.use_opengl = use_opengl and _OPENGL_AVAILABLE
         pygame.init()
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption("Simon's Sequence")
+
+        if self.use_opengl:
+            self._init_opengl()
+        else:
+            self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+            pygame.display.set_caption("Simon's Sequence")
+
         self.clock = pygame.time.Clock()
         self.font_small = pygame.font.SysFont("arial", 18)
         self.font_med = pygame.font.SysFont("arial", 26, bold=True)
@@ -135,6 +152,8 @@ class Game:
         self.tile_count = 4
         self.state = Game.STATE_MENU
         self.sound = None
+        self._dragging = False
+        self._last_mouse = (0, 0)
 
         # Bonus feature: Live Algorithm Visualizer Mode (toggle with V)
         self.visualizer = AlgorithmVisualizer()
@@ -214,6 +233,103 @@ class Game:
                                                 base_color=(16, 16, 22)),
         }
 
+    def _init_opengl(self):
+        self.ctx = gl_context.create_window_context(WIDTH, HEIGHT)
+        self.opengl_program = gl_context.load_tile_program(self.ctx)
+        self.opengl_renderer = BoardRenderer(self.ctx, self.opengl_program)
+        self.camera = OrbitCamera(target=(0.0, 0.0, 0.0), distance=11.0,
+                                  yaw=-60.0, pitch=32.0, aspect=WIDTH / HEIGHT)
+        self._init_text_renderer()
+
+
+    def _build_opengl_layout(self):
+        count = self.tile_count
+        cols = 2 if count <= 4 else 3
+        rows = math.ceil(count / cols)
+        spacing = 2.6
+        self.opengl_layout = []
+        for i in range(count):
+            r, c = divmod(i, cols)
+            x = (c - (cols - 1) / 2.0) * spacing
+            z = (r - (rows - 1) / 2.0) * spacing
+            self.opengl_layout.append((x, z))
+
+    def _tile_render_params(self, tile):
+        idx = tile.index
+        x, z = self.opengl_layout[idx]
+        color = tuple(c / 255.0 for c in tile.color)
+        height, lift, emissive = 1.0, 0.0, 0.0
+        if tile.state == Tile.STATE_PRESS:
+            phase = math.sin(tile.anim_t * math.pi)
+            height = 1.0 - 0.35 * phase
+            lift = 0.18 * phase
+            emissive = 0.25 * phase
+        elif tile.state == Tile.STATE_FLASH:
+            phase = math.sin(tile.anim_t * math.pi)
+            height = 1.0 + 0.15 * phase
+            emissive = 0.6 * phase
+        return {"x": x, "z": z, "color": color,
+                "height": height, "lift": lift, "emissive": emissive}
+
+    def _init_text_renderer(self):
+        vert_src = """#version 330
+        in vec2 in_position;
+        in vec2 in_texcoord;
+        out vec2 v_texcoord;
+        uniform mat3 u_matrix;
+        void main() {
+            v_texcoord = in_texcoord;
+            gl_Position = vec4(u_matrix * vec3(in_position, 1.0), 1.0);
+        }"""
+        frag_src = """#version 330
+        in vec2 v_texcoord;
+        out vec4 f_color;
+        uniform sampler2D u_texture;
+        uniform vec4 u_color;
+        void main() {
+            vec4 tex = texture(u_texture, v_texcoord);
+            f_color = vec4(u_color.rgb, tex.a * u_color.a);
+        }"""
+        self.text_program = self.ctx.program(vertex_shader=vert_src, fragment_shader=frag_src)
+        quad = np.array([
+            -1, -1, 0, 0,
+             1, -1, 1, 0,
+            -1,  1, 0, 1,
+            -1,  1, 0, 1,
+             1, -1, 1, 0,
+             1,  1, 1, 1,
+        ], dtype='f4')
+        self.text_vbo = self.ctx.buffer(quad.tobytes())
+        self.text_vao = self.ctx.vertex_array(
+            self.text_program, [(self.text_vbo, "2f 2f", "in_position", "in_texcoord")])
+
+    def _render_text(self, text, x, y, size, color=(1.0, 1.0, 1.0, 1.0)):
+        font = pygame.font.SysFont("arial", size)
+        surf = font.render(text, True, (255, 255, 255))
+        surf = pygame.transform.flip(surf, False, True)
+        w, h = surf.get_size()
+        data = pygame.image.tostring(surf, "RGBA", False)
+        texture = self.ctx.texture((w, h), 4)
+        texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        texture.write(data)
+        texture.use(0)
+        sx = 2.0 * w / WIDTH
+        sy = -2.0 * h / HEIGHT
+        tx = 2.0 * x / WIDTH - 1.0
+        ty = 1.0 - 2.0 * y / HEIGHT
+        matrix = np.array([
+            [sx, 0.0, tx],
+            [0.0, sy, ty],
+            [0.0, 0.0, 1.0]
+        ], dtype=np.float32)
+        self.text_program["u_matrix"].write(matrix.tobytes())
+        self.text_program["u_color"].value = color
+        self.text_program["u_texture"].value = 0
+        self.ctx.enable(moderngl.BLEND)
+        self.text_vao.render()
+        self.ctx.disable(moderngl.BLEND)
+        texture.release()
+
     # ---------------------------------------------------------- setup --
     def _build_menu_buttons(self):
         self.difficulty_buttons = [
@@ -275,6 +391,8 @@ class Game:
         self.playback_timer = 0.0
         self.active_filter_surface = None
         self.last_result_images = None  # (original, filtered, filter_name) for post-round analysis
+        if self.use_opengl:
+            self._build_opengl_layout()
 
     def start_game(self):
         self.reset_run()
@@ -329,6 +447,37 @@ class Game:
             elif event.key == pygame.K_r and self.state == Game.STATE_REPLAY and self.replay_player.finished:
                 self.state = Game.STATE_MENU
 
+        if self.use_opengl:
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 3:
+                    self._dragging = True
+                    self._last_mouse = event.pos
+                elif event.button == 1:
+                    if self.state == Game.STATE_MENU:
+                        self.state = Game.STATE_SHOW_SEQUENCE
+                        self.start_game()
+                    elif self.state == Game.STATE_PLAYER_TURN:
+                        self._handle_tile_click(event.pos)
+                    elif self.state == Game.STATE_PAUSED:
+                        self.state = Game.STATE_PLAYER_TURN
+                    elif self.state == Game.STATE_GAME_OVER:
+                        self.state = Game.STATE_MENU
+                    elif self.state == Game.STATE_REPLAY and self.replay_player.finished:
+                        self.state = Game.STATE_MENU
+                elif event.button == 4:
+                    self.camera.zoom(1.0)
+                elif event.button == 5:
+                    self.camera.zoom(-1.0)
+            elif event.type == pygame.MOUSEWHEEL:
+                self.camera.zoom(event.y)
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 3:
+                self._dragging = False
+            elif event.type == pygame.MOUSEMOTION and self._dragging:
+                mx, my = event.pos
+                self.camera.orbit(mx - self._last_mouse[0], my - self._last_mouse[1])
+                self._last_mouse = (mx, my)
+            return
+
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             pos = event.pos
             if self.state == Game.STATE_MENU:
@@ -353,6 +502,17 @@ class Game:
             self.start_game()
 
     def _handle_tile_click(self, pos):
+        if self.use_opengl:
+            view = self.camera.view_matrix()
+            proj = self.camera.projection_matrix(near=0.1, far=100.0)
+            tiles_data = [{"x": self.opengl_layout[t.index][0],
+                           "z": self.opengl_layout[t.index][1],
+                           "height": self._tile_render_params(t)["height"]}
+                          for t in self.tiles]
+            picked = pick_tile(pos, WIDTH, HEIGHT, view, proj, tiles_data)
+            if picked is not None:
+                self._process_click(self.tiles[picked])
+            return
         for tile in self.tiles:
             if tile.contains_point(*pos):
                 self._process_click(tile)
@@ -382,6 +542,8 @@ class Game:
     def _apply_live_filter(self, tile):
         """Capture the current frame and run this tile's spatial filter
         on it live, per the 'Effect Tiles' section of the proposal."""
+        if self.use_opengl:
+            return
         arr = pygame.surfarray.array3d(self.screen)  # (W, H, 3)
         arr = np.transpose(arr, (1, 0, 2))            # -> (H, W, 3)
         filt = self.tile_defs[tile.index]["filter"]
@@ -449,6 +611,8 @@ class Game:
     def _prepare_post_round_analysis(self):
         """Take a final screenshot and run all filters on it for the
         Matplotlib side-by-side comparison shown after Game Over."""
+        if self.use_opengl:
+            return
         arr = pygame.surfarray.array3d(self.screen)
         arr = np.transpose(arr, (1, 0, 2))
         self.last_result_images = {
@@ -537,6 +701,9 @@ class Game:
 
     # ------------------------------------------------------------ draw --
     def _draw(self):
+        if self.use_opengl:
+            self._draw_opengl()
+            return
         self.screen.blit(self.bg_surface, (0, 0))
         if self.state == Game.STATE_MENU:
             self._draw_menu()
@@ -560,6 +727,43 @@ class Game:
         if self.show_visualizer:
             self.visualizer.draw(self.screen, (20, HEIGHT - 190, 280, 170),
                                   self.font_small, self.font_mono)
+
+    def _draw_opengl(self):
+        self.ctx.clear(0.06, 0.06, 0.09, 1.0, depth=1.0)
+        render_data = [self._tile_render_params(t) for t in self.tiles]
+        self.opengl_renderer.render(self.camera, render_data)
+        if self.state == Game.STATE_MENU:
+            self._render_text("Simon's Sequence", WIDTH // 2 - 180, 120, 48, (0.31, 0.73, 0.94, 1.0))
+            self._render_text("3D OpenGL Mode - Click to Start", WIDTH // 2 - 200, 200, 26, (0.78, 0.82, 0.86, 1.0))
+        elif self.state == Game.STATE_SHOW_SEQUENCE:
+            self._render_text("Watch the sequence...", WIDTH // 2 - 140, 20, 26, (0.78, 0.82, 0.86, 1.0))
+        elif self.state == Game.STATE_PLAYER_TURN:
+            self._render_text("Your turn!", WIDTH // 2 - 80, 20, 26, (0.31, 0.73, 0.94, 1.0))
+        elif self.state == Game.STATE_PAUSED:
+            self._render_text("PAUSED", WIDTH // 2 - 70, HEIGHT // 2 - 20, 48, (0.31, 0.73, 0.94, 1.0))
+            self._render_text("Click to resume", WIDTH // 2 - 110, HEIGHT // 2 + 30, 22, (0.78, 0.82, 0.86, 1.0))
+        elif self.state == Game.STATE_GAME_OVER:
+            self._render_text("GAME OVER", WIDTH // 2 - 110, HEIGHT // 2 - 60, 48, (0.88, 0.31, 0.31, 1.0))
+            score_text = f"Score: {self.score}   High Score: {self.high_score}"
+            self._render_text(score_text, WIDTH // 2 - 200, HEIGHT // 2 - 10, 26, (0.78, 0.82, 0.86, 1.0))
+        elif self.state == Game.STATE_REPLAY:
+            self._render_text("REPLAY MODE", WIDTH // 2 - 110, 20, 26, (1.0, 0.80, 0.24, 1.0))
+        y_start = 20
+        info = [
+            f"Round: {self.round_num}",
+            f"Score: {self.score}",
+            f"Combo x{1 + self.combo // 3}",
+            f"Lives: {self.lives}",
+            f"Difficulty: {self.difficulty_name}",
+        ]
+        for i, line in enumerate(info):
+            self._render_text(line, 20, y_start + i * 22, 18, (0.78, 0.82, 0.86, 1.0))
+        if self.state == Game.STATE_PLAYER_TURN:
+            bx, by = WIDTH - 340, 20
+            pct = max(0.0, self.timer / DIFFICULTIES[self.difficulty_name]["round_time"])
+            self._render_text(f"Time: {self.timer:.1f}s", bx, by, 18, (0.78, 0.82, 0.86, 1.0))
+        if self.victory_pattern_surface is not None:
+            self._render_text(f"Round {self.round_num} Milestone!", WIDTH // 2 - 140, HEIGHT // 2 - 50, 22, (0.31, 0.73, 0.94, 1.0))
 
     def _blit_panel(self, key, extra_offset=(0, 0)):
         """Blit a precomputed static glass panel (see _build_static_panels)."""
