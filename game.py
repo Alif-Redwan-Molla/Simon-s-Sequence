@@ -170,7 +170,7 @@ class Game:
         self.visualizer = AlgorithmVisualizer()
         self.show_visualizer = False
         self.visualizer_close_button = Button(
-            (20 + 280 - 55, HEIGHT - 190 + 8, 50, 24),
+            (20 + 280 - 55, 572 + 8, 50, 24),
             "OFF", "close_visualizer")
 
         # Bonus feature: Flood Fill Victory Pattern (every 5th round)
@@ -182,6 +182,8 @@ class Game:
         self.last_replay = None
         self.replay_player = None
         self.replay_button = None
+        self.replay_close_button = Button(
+            (WIDTH // 2 + 120, HEIGHT - 42, 70, 28), "Close", "close_replay")
 
         self._build_menu_buttons()
         self.bg_surface = self._build_background()
@@ -794,7 +796,7 @@ class Game:
         # Bonus feature: Live Algorithm Visualizer Mode, toggled with V,
         # drawn last so it floats above everything else.
         if self.show_visualizer:
-            self.visualizer.draw(self.screen, (20, HEIGHT - 190, 280, 170),
+            self.visualizer.draw(self.screen, (20, 572, 280, 128),
                                   self.font_small, self.font_mono)
             self.visualizer_close_button.draw(self.screen, self.font_small, bg_color=(200, 55, 55))
 
@@ -958,6 +960,7 @@ class Game:
         """Bonus feature: Replay System HUD label."""
         label = self.font_med.render("REPLAY MODE", True, (255, 205, 60))
         self.screen.blit(label, label.get_rect(center=(WIDTH // 2, 30)))
+        self.replay_close_button.draw(self.screen, self.font_small, bg_color=(200, 55, 55))
         if self.replay_player.finished:
             self._blit_panel("replay")
             text = self.font_small.render(
